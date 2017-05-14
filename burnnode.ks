@@ -1,0 +1,93 @@
+// Function BurnNode (takes a Node parameter).
+DECLARE PARAMETER N.
+
+LOCAL T TO 0.
+
+ADD N. // Add N to the maneuver node system.
+
+LOCAL bt TO N:DELTAV:MAG/(SHIP:AVAILABLETHRUST/SHIP:MASS). 
+LOCAL lt to 0.5*bt. //Worst case.  Typically too early.
+	
+LOCAL stErrX TO N:BURNVECTOR:NORMALIZED:X - FACING:VECTOR:NORMALIZED:X.
+LOCAL stErrY TO N:BURNVECTOR:NORMALIZED:Y - FACING:VECTOR:NORMALIZED:Y.
+LOCAL stErrZ TO N:BURNVECTOR:NORMALIZED:Z - FACING:VECTOR:NORMALIZED:Z.
+LOCAL stErr TO sqrt(stErrX^2+stErrY^2+stErrZ^2).
+
+
+
+// Figure out burntime
+SET a0 TO SHIP:AVAILABLETHRUST/SHIP:MASS.
+SET eIsp TO 0.
+LIST engines in my_engines.
+FOR eng in my_engines {
+	SET eISP TO eISP + eng:AVAILABLETHRUST/SHIP:AVAILABLETHRUST*eng:ISP.
+}
+SET Ve TO eISP * 9.82.
+SET final_mass to SHIP:MASS*CONSTANT():e^(-1*N:BURNVECTOR:MAG/Ve).
+SET a1 to SHIP:AVAILABLETHRUST/final_mass.
+SET bt TO N:BURNVECTOR:MAG/((a0+a1)/2).
+SET lt TO bt / 2.
+PRINT "Lead Time is: " + lt.
+PRINT "Burn Time is: " + bt.
+
+
+
+LOCK THROTTLE TO T.
+SAS OFF.
+IF N:NORMAL <> 0 AND N:RADIALOUT = 0 AND N:PROGRADE = 0 {
+	IF N:NORMAL < 0 {
+		LOCK STEERING TO VCRS(SHIP:VELOCITY:ORBIT, BODY:POSITION).
+	} ELSE {
+		LOCK STEERING TO ((-1) * VCRS(SHIP:VELOCITY:ORBIT, BODY:POSITION)).
+	}
+} ELSE { 
+	LOCK STEERING TO N.
+}
+
+UNTIL stErr < 0.01 {   // Make sure we are pointed in the right direction before doing anything else.
+	SET stErrX TO N:BURNVECTOR:NORMALIZED:X - FACING:VECTOR:NORMALIZED:X.
+	SET stErrY TO N:BURNVECTOR:NORMALIZED:Y - FACING:VECTOR:NORMALIZED:Y.
+	SET stErrZ TO N:BURNVECTOR:NORMALIZED:Z - FACING:VECTOR:NORMALIZED:Z.
+	SET stErr TO sqrt(stErrX^2+stErrY^2+stErrZ^2).
+
+	WAIT 1.
+	IF N:ETA <= lt break.
+}	
+// Add KAC alarm if installed
+
+IF ADDONS:KAC:AVAILABLE {
+	IF N:ETA >= 300 {
+		SET circAlarm TO ADDALARM("Raw",TIME:SECONDS + N:ETA - (lt+15),SHIP:NAME + " Maneuver Node","").
+		SET circAlarm:ACTION TO "KillWarpOnly".
+	}.
+}.
+SET WARP TO 0.
+
+WAIT UNTIL N:ETA <= lt + 10.
+PRINT "10 seconds".
+UNTIL N:ETA <= lt {
+	PRINT "BURN IN: " AT (0,0).
+	PRINT "   " + ROUND(N:ETA - lt,2) AT (9,0).
+}
+SET burnComplete TO FALSE.
+SET dv0 TO N:DELTAV.
+UNTIL burnComplete {
+	SET T to MIN(N:DELTAV:MAG/(SHIP:AVAILABLETHRUST/SHIP:MASS),1).
+	IF vdot(dv0,N:DELTAV) < 0 {
+		break.
+	}.
+	IF N:DELTAV:MAG < 0.1
+	{
+		WAIT UNTIL vdot(dv0,N:DELTAV) < 0.5.
+		SET T TO 0.
+		SET burnComplete to TRUE.
+	}.
+}.
+
+
+LOCK STEERING TO "Kill".
+UNLOCK STEERING.
+SAS ON.
+WAIT 1.
+REMOVE N.
+WAIT 1.
